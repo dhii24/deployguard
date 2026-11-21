@@ -1,0 +1,164 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Environment {
+  DEVELOPMENT
+  STAGING
+  PRODUCTION
+}
+
+enum AgentStatus {
+  OFFLINE
+  ONLINE
+}
+
+enum DeploymentStrategy {
+  CANARY
+  BLUE_GREEN
+}
+
+enum DeploymentStatus {
+  PENDING
+  PREPARING
+  DEPLOYING
+  ANALYZING
+  SUCCEEDED
+  FAILED
+  ROLLING_BACK
+  ROLLED_BACK
+}
+
+enum StageStatus {
+  PENDING
+  RUNNING
+  PASSED
+  FAILED
+}
+
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  name         String
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  projects     Project[]
+  servers      Server[]
+  auditLogs    AuditLog[]
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+model Project {
+  id            String             @id @default(uuid()) @db.Uuid
+  name          String
+  repositoryUrl String?
+  ownerId       String             @db.Uuid
+  owner         User               @relation(fields: [ownerId], references: [id])
+  targets       DeploymentTarget[]
+  auditLogs     AuditLog[]
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  @@index([ownerId])
+}
+
+model Server {
+  id             String             @id @default(uuid()) @db.Uuid
+  name           String
+  ipAddress      String?
+  agentStatus    AgentStatus        @default(OFFLINE)
+  agentTokenHash String?            @unique
+  ownerId        String             @db.Uuid
+  owner          User               @relation(fields: [ownerId], references: [id])
+  targets        DeploymentTarget[]
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@index([ownerId])
+}
+
+model DeploymentTarget {
+  id          String             @id @default(uuid()) @db.Uuid
+  projectId   String             @db.Uuid
+  serverId    String             @db.Uuid
+  environment Environment
+  project     Project            @relation(fields: [projectId], references: [id])
+  server      Server             @relation(fields: [serverId], references: [id])
+  policies    DeploymentPolicy[]
+  deployments Deployment[]
+  createdAt   DateTime           @default(now())
+
+  @@unique([projectId, serverId, environment])
+  @@index([serverId])
+}
+
+model DeploymentPolicy {
+  id                String             @id @default(uuid()) @db.Uuid
+  targetId          String             @db.Uuid
+  target            DeploymentTarget   @relation(fields: [targetId], references: [id])
+  strategy          DeploymentStrategy
+  trafficStages     Json
+  maxErrorRate      Float
+  maxLatencyMs      Int
+  evaluationSeconds Int
+  version           Int                @default(1)
+  createdAt         DateTime           @default(now())
+
+  @@unique([targetId, version])
+}
+
+model Deployment {
+  id                   String            @id @default(uuid()) @db.Uuid
+  targetId             String            @db.Uuid
+  target               DeploymentTarget  @relation(fields: [targetId], references: [id])
+  imageTag             String
+  imageDigest          String?
+  status               DeploymentStatus  @default(PENDING)
+  policySnapshot       Json
+  previousDeploymentId String?           @db.Uuid
+  previousDeployment   Deployment?       @relation("DeploymentHistory", fields: [previousDeploymentId], references: [id])
+  nextDeployments      Deployment[]      @relation("DeploymentHistory")
+  failureReason        String?
+  stages               DeploymentStage[]
+  auditLogs            AuditLog[]
+  startedAt            DateTime?
+  completedAt          DateTime?
+  createdAt            DateTime          @default(now())
+
+  @@index([targetId, createdAt])
+}
+
+model DeploymentStage {
+  id                String      @id @default(uuid()) @db.Uuid
+  deploymentId      String      @db.Uuid
+  deployment        Deployment  @relation(fields: [deploymentId], references: [id])
+  stageNumber       Int
+  trafficPercentage Int
+  errorRate         Float?
+  latencyMs         Float?
+  status            StageStatus @default(PENDING)
+  startedAt         DateTime?
+  completedAt       DateTime?
+
+  @@unique([deploymentId, stageNumber])
+}
+
+model AuditLog {
+  id           String      @id @default(uuid()) @db.Uuid
+  actorId      String?     @db.Uuid
+  actor        User?       @relation(fields: [actorId], references: [id])
+  projectId    String?     @db.Uuid
+  project      Project?    @relation(fields: [projectId], references: [id])
+  deploymentId String?     @db.Uuid
+  deployment   Deployment? @relation(fields: [deploymentId], references: [id])
+  action       String
+  description  String?
+  createdAt    DateTime    @default(now())
+
+  @@index([createdAt])
+}
